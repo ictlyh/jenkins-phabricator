@@ -1,13 +1,13 @@
 #!/bin/bash
 
 # Install Jenkins and Phabricator in RHEL
-# CentOS 7 tested, for CentOS 5/6, concern:
-# 1: MySQL httpd configuration file, support subdirectory?
-# 2: Openssh version requirement of Phabricator
+# CentOS 6 or CentOS 7
+
+# sshd on port 22 must be 6.2 or newer
 
 # Before running this script, edit configuration
-# files in confdir/ directory and this file
-# according to your preference, replace
+# files httpd2.*.conf/, local.json in directory confdir/
+# and this file according to your preference, replace
 # <value> with your setting
 
 # If any error occurs, fix the issue and re-run the script
@@ -40,7 +40,7 @@ else
 fi
 
 ROOT=$(cd $(dirname $0); pwd)
-HOSTADDRESS=http://<your server ip>
+HOSTADDRESS=http://<your-server>
 
 ## Jenkins Section ##
 JENKINS_HOME=/home/jenkins
@@ -56,7 +56,7 @@ fi
 
 echo "Add jenkins repository source"
 curl -fL http://pkg.jenkins-ci.org/redhat-stable/jenkins.repo -o /etc/yum.repos.d/jenkins.repo
-rpm --import https://jenkins-ci.org/redhat/jenkins-ci.org.key
+rpm --import http://pkg.jenkins-ci.org/redhat-stable/jenkins-ci.org.key
 
 echo "Installing jenkins"
 yum -y install jenkins
@@ -67,14 +67,17 @@ chkconfig jenkins on
 if [ $RHEL_MAJOR_VER == 5 ]; then
     EPEL_URL="http://dl.fedoraproject.org/pub/epel/5/x86_64/epel-release-5-4.noarch.rpm"
     PACKAGES="httpd git php53 php53-cli php53-mysql php53-process php53-devel php53-gd gcc wget make pcre-devel mysql-server"
+    DB_SERVICE=mysqld
 elif [ $RHEL_MAJOR_VER == 6 ]; then
     EPEL_URL="http://dl.fedoraproject.org/pub/epel/6/x86_64/epel-release-6-8.noarch.rpm"
     PACKAGES="httpd git php php-cli php-mysql php-process php-devel php-gd php-pecl-apc php-pecl-json php-mbstring mysql-server"
+    DB_SERVICE=mysqld
 elif [ $RHEL_MAJOR_VER == 7 ]; then
     EPEL_URL="http://dl.fedoraproject.org/pub/epel/7/x86_64/e/epel-release-7-5.noarch.rpm"
     PACKAGES="httpd git php php-cli php-mysql php-process php-devel php-gd php-pecl-apc php-pecl-json php-mbstring python-pip pcre-devel mariadb-server"
+    DB_SERVICE=mariadb
 else
-    echo "RHEL MAJOR VERSION is $RHEL_MAJOR_VER, not in 5 and 7, exit"
+    echo "RHEL MAJOR VERSION is $RHEL_MAJOR_VER, not between in 5 and 7, exit"
     exit 1
 fi
 
@@ -88,9 +91,8 @@ set -e
 
 yum makecache && yum -y update
 
-
 ## Phabricator Section ##
-PHABRICATOR_ROOT=/var/www/html/phabricator
+WEB_ROOT=/var/www/html
 echo "Installing packages: $PACKAGES"
 yum -y install $PACKAGES
 
@@ -106,8 +108,8 @@ if [[ $? -ne 0 ]]; then
     echo "The apc install failed. Continuing without APC, performance may be impacted."
 fi
 
-service mariadb start
-chkconfig mariadb on
+service $DB_SERVICE start
+chkconfig $DB_SERVICE on
 service httpd start
 chkconfig httpd on
 
@@ -115,34 +117,41 @@ echo "Download and install phabricator"
 if [ ! -d "/var/www/html" ]; then
     mkdir -p /var/www/html
 fi
-cd /var/www/html/
-rm -rf libphutil arcanist phabricator
-git clone https://github.com/phacility/libphutil.git
-git clone https://github.com/phacility/arcanist.git
-git clone https://github.com/phacility/phabricator.git
+
+rm -rf $WEB_ROOT/libphutil $WEB_ROOT/arcanist $WEB_ROOT/phabricator
+git clone https://github.com/phacility/libphutil.git $WEB_ROOT/libphutil
+git clone https://github.com/phacility/arcanist.git $WEB_ROOT/arcanist
+git clone https://github.com/phacility/phabricator.git $WEB_ROOT/phabricator
 
 echo "Phabircator configuration"
-cp -f $ROOT/confdir/local.json $PHABRICATOR_ROOT/conf/local/
-echo "Create repository directory $PHABRICATOR_ROOT/repo"
-if [ ! -d $PHABRICATOR_ROOT/repo ]; then
-    mkdir -p $PHABRICATOR_ROOT/repo
+cp -f $ROOT/confdir/local.json $WEB_ROOT/phabricator/conf/local/
+echo "Create repository directory $WEB_ROOT/phabricator/repo"
+if [ ! -d $WEB_ROOT/phabricator/repo ]; then
+    mkdir -p $WEB_ROOT/phabricator/repo
 fi
 
-echo "Setup MariaDB root password"
+echo "Setup MySQL root password"
 mysql_secure_installation
-echo "Configure MariaDB for Phabricator"
+echo "Configure MySQL for Phabricator"
 if [ ! -d "/etc/my.cnf.d" ]; then
     mkdir -p /etc/my.cnf.d
 fi
-cp -f $ROOT/confdir/mariadb.cnf /etc/my.cnf.d/phabricator.cnf
+cp -f $ROOT/confdir/mysql.cnf /etc/my.cnf.d/phabricator.cnf
+echo "!include /etc/my.cnf.d/phabricator.cnf" >> /etc/my.cnf
+
 echo "Load phabricator schema into database"
-$PHABRICATOR_ROOT/bin/storage upgrade --force
+$WEB_ROOT/phabricator/bin/storage upgrade --force
 
 echo "Configure Apache web server for Phabricator"
 if [ ! -d "/etc/httpd/conf.d" ]; then
     mkdir -p /etc/httpd/conf.d
 fi
-cp -f $ROOT/confdir/httpd.conf /etc/httpd/conf.d/phabricator.conf
+
+if [[ $RHEL_MAJOR_VER == 7 ]]; then
+    cp -f $ROOT/confdir/httpd2.4.conf /etc/httpd/conf.d/phabricator.conf
+else
+    cp -f $ROOT/confdir/httpd2.3.conf /etc/httpd/conf.d/phabricator.conf
+fi
 
 echo "Configure PHP for Phabricator"
 echo extension=apc.so >> /etc/php.ini
@@ -160,8 +169,8 @@ else
 fi
 
 echo "Update file /etc/sudoers"
-echo "git ALL=(root) SETENV: NOPASSWD: /usr/libexec/git-core/git-upload-pack, /usr/libexec/git-core/git-receive-pack" >> /etc/sudoers
-echo "apache ALL=(root) SETENV: NOPASSWD: /usr/libexec/git-core/git-http-backend" >> /etc/sudoers
+echo "git ALL=(root) SETENV: NOPASSWD: ALL" >> /etc/sudoers
+echo "apache ALL=(root) SETENV: NOPASSWD: ALL" >> /etc/sudoers
 ln -sf /usr/libexec/git-core/git-http-backend /usr/bin/git-http-backend
 sed -i "s/.*requiretty/#Defaults requiretty/g" /etc/sudoers
 
@@ -175,17 +184,23 @@ service sshd stop
 sed -i "s/.*Port 22/Port 222/g" /etc/ssh/sshd_config
 /usr/sbin/sshd -f /etc/ssh/sshd_config
 /usr/sbin/sshd -f /etc/ssh/sshd_config.phabricator 
-$PHABRICATOR_ROOT/bin/phd restart
+$WEB_ROOT/phabricator/bin/phd restart
 
-echo "Configure firewall for Phabricator and Jenkins"
-firewall-cmd --permanent --add-port=80/tcp
-firewall-cmd --permanent --add-port=8080/tcp
-service firewalld restart
-
+echo "Configure iptables and firewall for Phabricator and Jenkins"
+if [[ $RHEL_MAJOR_VER == 7 ]]; then
+    firewall-cmd --permanent --add-port=80/tcp
+    firewall-cmd --permanent --add-port="$JENKINS_PORT"/tcp
+    service firewalld restart
+else
+    iptables -A INPUT -p tcp --dport 80 -j ACCEPT
+    iptables -A INPUT -p tcp --dport $JENKINS_PORT -j ACCEPT
+    /etc/rc.d/init.d/iptables save
+    service iptables restart
+fi
 service httpd restart
-service mariadb restart
+service $DB_SERVICE restart
 
 echo "Install Jenkins and Phabricator finished"
-echo "Go to $HOSTADDRESS:8080/manage to configure Jenkins"
+echo "Go to $HOSTADDRESS:$JENKINS_PORT/manage to configure Jenkins"
 echo "Go to $HOSTADDRESS to create an admin account for Phabricator"
 echo "Go to $HOSTADDRESS/settings/panel/ssh and upload your public key"

@@ -1,15 +1,15 @@
 {
   "diffusion.ssh-user": "git",
   "phd.user": "root",
-  "mysql.pass": "<your-password>",
+  "mysql.pass": "root",
   "mysql.user": "root",
   "mysql.host": "localhost",
   "metamta.mail-adapter": "PhabricatorMailImplementationPHPMailerAdapter",
   "phpmailer.smtp-protocol": "ssl",
   "phpmailer.smtp-password": "<mail password>",
   "phpmailer.smtp-user": "<mail account>",
-  "phpmailer.smtp-port": <mail port>,
-  "phpmailer.smtp-host": "<mail server>",
+  "phpmailer.smtp-port": 465,
+  "phpmailer.smtp-host": "smtp.gmail.com",
   "phpmailer.mailer": "smtp",
   "repository.default-local-path": "/var/www/html/phabricator/repo",
   "phabricator.base-uri": "http://<your-server>"
